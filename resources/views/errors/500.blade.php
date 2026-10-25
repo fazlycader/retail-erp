@@ -1,0 +1,5 @@
+@extends('errors.layout')
+@section('code', '500')
+@section('title', 'Something went wrong')
+@section('message', "Sorry, that didn't work. We've been notified. Please try again in a moment, or ask our staff for help.")
+@section('hint', 'Error reference: '.now()->format('YmdHis'))

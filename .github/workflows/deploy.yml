@@ -1,0 +1,138 @@
+# Tests, builds and deploys to Hostinger on every push to main (and on demand: Actions → Deploy → Run workflow,
+# where you can pick the staging environment for the go-live rehearsal, docs/DEPLOYMENT.md §16).
+# Secrets (Settings → Secrets and variables → Actions → Secrets): see docs/DEPLOYMENT.md §8.
+#   SSH_HOST, SSH_PORT, SSH_USER, SSH_PRIVATE_KEY, SSH_KNOWN_HOSTS, DEPLOY_PATH, APP_URL,
+#   HEALTH_TOKEN, OPCACHE_RESET_TOKEN
+# Variables (same page → Variables): DEPLOY_ENABLED=true (turns deploying on), PHP_BIN, WEB_ROOT,
+# WEB_ROOT_MODE (optional).
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Where to deploy (each is a GitHub environment with its own secrets)
+        type: choice
+        options: [production, staging]
+        default: production
+
+concurrency:
+  group: deploy-${{ inputs.target || 'production' }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: pdo_sqlite, pdo_mysql, gd, intl, bcmath, mbstring, fileinfo, zip, exif
+          coverage: none
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Composer install
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: App key
+        run: cp .env.example .env && php artisan key:generate
+
+      - name: Build assets
+        run: npm ci --no-audit --no-fund && npm run build
+
+      - name: Tests (Pest)
+        run: php artisan test
+
+      - name: Code style
+        run: vendor/bin/pint --test
+
+      - name: WordPress plugin lint
+        run: |
+          find wordpress-plugin -name '*.php' -print0 | xargs -0 -n1 php -l
+
+  deploy:
+    needs: test
+    # Opt-in: deploys only once the repository variable DEPLOY_ENABLED is "true" (after the
+    # server is set up as in docs/DEPLOYMENT.md). Until then every push just runs the tests.
+    if: vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target || 'production' }}
+    env:
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+      APP_URL: ${{ secrets.APP_URL }}
+      REMOTE_ENV: APP_ROOT='${{ secrets.DEPLOY_PATH }}' PHP_BIN='${{ vars.PHP_BIN || 'php' }}' WEB_ROOT='${{ vars.WEB_ROOT }}' WEB_ROOT_MODE='${{ vars.WEB_ROOT_MODE || 'none' }}'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Build assets
+        run: npm ci --no-audit --no-fund && npm run build
+
+      - name: Release name
+        id: release
+        run: |
+          echo "name=$(date -u +%Y%m%d-%H%M%S)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "$(date -u +%Y%m%d-%H%M%S)-${GITHUB_SHA::7}" > RELEASE
+
+      - name: SSH key
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
+          echo "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          cat >> ~/.ssh/config <<CONFIG
+          Host hostinger
+            HostName ${{ secrets.SSH_HOST }}
+            Port ${{ secrets.SSH_PORT }}
+            User ${{ secrets.SSH_USER }}
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            ServerAliveInterval 30
+          CONFIG
+
+      - name: Upload release
+        run: |
+          R="${{ steps.release.outputs.name }}"
+          # Start from the live release (vendor, caches) so only changes travel, then sync the build.
+          ssh hostinger "mkdir -p '$DEPLOY_PATH/releases/$R' && if [ -d '$DEPLOY_PATH/current/' ]; then cp -a '$DEPLOY_PATH/current/.' '$DEPLOY_PATH/releases/$R/'; fi"
+          rsync -az --delete --exclude-from=scripts/deploy/rsync-exclude.txt -e ssh ./ "hostinger:$DEPLOY_PATH/releases/$R/"
+
+      - name: Prepare (composer, caches)
+        run: ssh hostinger "$REMOTE_ENV bash '$DEPLOY_PATH/releases/${{ steps.release.outputs.name }}/scripts/deploy/remote.sh' prepare '${{ steps.release.outputs.name }}'"
+
+      - name: Activate (migrate, switch, queue restart, prune)
+        run: ssh hostinger "$REMOTE_ENV bash '$DEPLOY_PATH/releases/${{ steps.release.outputs.name }}/scripts/deploy/remote.sh' activate '${{ steps.release.outputs.name }}'"
+
+      - name: Reset OPcache
+        continue-on-error: true
+        run: |
+          curl -fsS -X POST -H "X-Deploy-Token: ${{ secrets.OPCACHE_RESET_TOKEN }}" "$APP_URL/deploy/opcache-reset"
+
+      - name: Health check
+        id: health
+        run: |
+          for i in 1 2 3 4 5 6; do
+            if curl -fsS -H "X-Health-Token: ${{ secrets.HEALTH_TOKEN }}" "$APP_URL/health?scope=deploy"; then exit 0; fi
+            sleep 5
+          done
+          exit 1
+
+      - name: Roll back on failure
+        if: failure() && steps.health.outcome == 'failure'
+        run: |
+          ssh hostinger "$REMOTE_ENV bash '$DEPLOY_PATH/current/scripts/deploy/remote.sh' rollback"
+          curl -fsS -X POST -H "X-Deploy-Token: ${{ secrets.OPCACHE_RESET_TOKEN }}" "$APP_URL/deploy/opcache-reset" || true
+          echo "::error::Deploy rolled back: /health failed after switching to ${{ steps.release.outputs.name }}"
+          exit 1

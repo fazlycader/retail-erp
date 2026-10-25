@@ -1,0 +1,12 @@
+{
+    "$schema": "https://schemas.wp.org/trunk/block.json",
+    "apiVersion": 3,
+    "name": "mvrk/showroom-availability",
+    "title": "Available at our showrooms",
+    "category": "woocommerce",
+    "icon": "store",
+    "description": "Live per-showroom availability of the product (or the chosen variation) on this page.",
+    "attributes": { "sku": { "type": "string", "default": "" } },
+    "supports": { "html": false },
+    "textdomain": "mvrk-woo-connector"
+}

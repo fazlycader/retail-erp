@@ -1,0 +1,6 @@
+@extends('errors.layout')
+@section('code', '404')
+@section('title', 'Page not found')
+@section('message', "We couldn't find that page. If you scanned a table QR code, please ask our staff for help.")
+@section('action', 'Go to the start')
+@section('action_url', '/')

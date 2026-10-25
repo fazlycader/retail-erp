@@ -1,0 +1,56 @@
+@import 'tailwindcss';
+@plugin '@tailwindcss/forms';
+
+@source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
+@source '../../storage/framework/views/*.php';
+@source '../views/**/*.blade.php';
+@source '../js/**/*.vue';
+
+@theme {
+    --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
+
+    /* Brand colour used across the admin. Swap these to re-theme. */
+    --color-brand-50: var(--color-indigo-50);
+    --color-brand-100: var(--color-indigo-100);
+    --color-brand-200: var(--color-indigo-200);
+    --color-brand-300: var(--color-indigo-300);
+    --color-brand-400: var(--color-indigo-400);
+    --color-brand-500: var(--color-indigo-500);
+    --color-brand-600: var(--color-indigo-600);
+    --color-brand-700: var(--color-indigo-700);
+    --color-brand-800: var(--color-indigo-800);
+    --color-brand-900: var(--color-indigo-900);
+}
+
+/* Tailwind v4 defaults buttons to cursor:default; restore pointer for clickable things. */
+@layer base {
+    button:not(:disabled),
+    [role='button']:not(:disabled) {
+        cursor: pointer;
+    }
+}
+
+/*
+ * Touch screens (waiter phones, tablets): quick repeated taps on the same button (a PIN like
+ * 1111, +/− steppers) must not trigger double-tap zoom, and iPhones zoom into any input with
+ * text smaller than 16px. Pinch zoom still works.
+ */
+@layer base {
+    button,
+    a,
+    label,
+    input,
+    select,
+    textarea,
+    [role='button'] {
+        touch-action: manipulation;
+    }
+
+    @media (pointer: coarse) {
+        input,
+        select,
+        textarea {
+            font-size: max(16px, 1em);
+        }
+    }
+}

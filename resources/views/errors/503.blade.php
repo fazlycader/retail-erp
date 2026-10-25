@@ -1,0 +1,6 @@
+@extends('errors.layout')
+@section('code', '503')
+@section('title', 'Back in a moment')
+@section('message', "We're updating the system. This usually takes less than a minute.")
+@section('action', 'Try again')
+@section('action_url', url()->current())

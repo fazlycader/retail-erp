@@ -1,0 +1,9 @@
+{
+  "name": "Retail ERP Driver",
+  "short_name": "My Route",
+  "start_url": "/driver",
+  "scope": "/driver",
+  "display": "standalone",
+  "background_color": "#f9fafb",
+  "theme_color": "#3730a3"
+}

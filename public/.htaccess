@@ -1,0 +1,92 @@
+# Laravel on Hostinger (LiteSpeed, Apache-compatible). This is the ONLY web-facing folder:
+# the domain's web root points at <app>/current/public (see docs/DEPLOYMENT.md).
+
+Options -Indexes -MultiViews +FollowSymLinks
+
+# Waiter app (PWA) manifest.
+AddType application/manifest+json .webmanifest
+
+# LiteSpeed's page cache must never store app pages (staff screens, orders, receipts are
+# personal). Laravel sends Cache-Control: no-store on every response anyway.
+<IfModule LiteSpeed>
+    CacheLookup off
+</IfModule>
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # HTTPS everywhere (also behind the Hostinger CDN, which sends X-Forwarded-Proto).
+    RewriteCond %{HTTPS} !=on
+    RewriteCond %{HTTP:X-Forwarded-Proto} !https
+    RewriteCond %{HTTP_HOST} !^(localhost|127\.0\.0\.1)(:\d+)?$
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+    # Handle Authorization Header (print agent bearer token)
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+    # Handle X-XSRF-Token Header
+    RewriteCond %{HTTP:x-xsrf-token} .
+    RewriteRule .* - [E=HTTP_X_XSRF_TOKEN:%{HTTP:X-XSRF-Token}]
+
+    # Hidden files and folders (.env, .git, .vite…) are never served; .well-known is (SSL checks).
+    RewriteRule (^|/)\.(?!well-known/) - [F,L]
+
+    # Redirect Trailing Slashes If Not A Folder...
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_URI} (.+)/$
+    RewriteRule ^ %1 [L,R=301]
+
+    # Send Requests To Front Controller...
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteRule ^ index.php [L]
+</IfModule>
+
+# Nothing but index.php may run as PHP (an uploaded file can never execute).
+<FilesMatch "\.(php|phtml|phar|php\d)$">
+    Require all denied
+</FilesMatch>
+<Files "index.php">
+    Require all granted
+</Files>
+
+# Never serve configuration, logs, dumps or archives, even if one ends up in public/ by mistake.
+<FilesMatch "\.(env|log|sql|sqlite|gz|zip|tar|bak|old|orig|swp|sh|ini|lock|ya?ml|md|dist)$">
+    Require all denied
+</FilesMatch>
+
+# Compression (LiteSpeed also compresses on its own).
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/plain text/css text/xml application/json application/javascript application/xml image/svg+xml font/woff2
+</IfModule>
+
+# Caching: hashed build files and uploaded images (random file names) never change → 1 year.
+# Everything else (pages, JSON) is answered by Laravel with Cache-Control: no-store.
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+
+    <If "%{REQUEST_URI} =~ m#^/build/#">
+        Header set Cache-Control "public, max-age=31536000, immutable"
+    </If>
+    <If "%{REQUEST_URI} =~ m#^/storage/(products|categories|logos|attributes)/#">
+        Header set Cache-Control "public, max-age=31536000, immutable"
+    </If>
+    <If "%{REQUEST_URI} =~ m#^/(favicon\.ico|robots\.txt)$#">
+        Header set Cache-Control "public, max-age=86400"
+    </If>
+    # SVG uploads can carry scripts: they may display, never run.
+    <If "%{REQUEST_URI} =~ m#^/storage/.*\.svg$#">
+        Header set Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'"
+    </If>
+</IfModule>
+
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType image/webp "access plus 1 year"
+    ExpiresByType image/png "access plus 1 year"
+    ExpiresByType image/jpeg "access plus 1 year"
+    ExpiresByType text/css "access plus 1 year"
+    ExpiresByType application/javascript "access plus 1 year"
+    ExpiresByType font/woff2 "access plus 1 year"
+</IfModule>
